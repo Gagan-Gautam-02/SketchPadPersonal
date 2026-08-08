@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+/* ── Custom Design Tokens ────────────────────────────────────── */
+
+@theme {
+  --color-surface: #0f0f13;
+  --color-surface-elevated: #1a1a24;
+  --color-surface-overlay: #22222f;
+  --color-border-subtle: #2a2a3a;
+  --color-accent: #6c63ff;
+  --color-accent-hover: #7e76ff;
+  --color-accent-glow: rgba(108, 99, 255, 0.35);
+  --color-danger: #ef4444;
+  --color-danger-hover: #f87171;
+  --color-success: #10b981;
+  --color-text-primary: #f0f0f5;
+  --color-text-secondary: #9090a8;
+  --color-text-muted: #5a5a72;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/* ── Global Resets ───────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100dvh;
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;           /* the canvas fills the viewport */
+}
+
+/* ── Utility Animations ──────────────────────────────────────── */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes slide-out-right {
+  from { transform: translateX(0); }
+  to   { transform: translateX(100%); }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-spin        { animation: spin 0.8s linear infinite; }
+.animate-fade-in     { animation: fade-in 0.25s ease-out both; }
+.animate-slide-in    { animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-slide-out   { animation: slide-out-right 0.25s ease-in both; }
+.animate-toast-in    { animation: toast-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* ── Scrollbar Styling ───────────────────────────────────────── */
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-border-subtle);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* ── Canvas Touch Behavior ───────────────────────────────────── */
+
+canvas {
+  touch-action: none;
+  cursor: crosshair;
+}
