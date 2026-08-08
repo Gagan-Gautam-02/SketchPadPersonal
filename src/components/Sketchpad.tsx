@@ -100,17 +100,17 @@ function toNormalized(
   px: number,
   py: number,
   cw: number,
-  ch: number
+  _ch: number
 ): NormalizedPoint {
-  return { x: px / cw, y: py / ch };
+  return { x: px / cw, y: py / PAGE_HEIGHT_PX };
 }
 
 function fromNormalized(
   pt: NormalizedPoint,
   cw: number,
-  ch: number
+  _ch: number
 ): { x: number; y: number } {
-  return { x: pt.x * cw, y: pt.y * ch };
+  return { x: pt.x * cw, y: pt.y * PAGE_HEIGHT_PX };
 }
 
 /* ─── Component ──────────────────────────────────────────── */
