@@ -170,35 +170,6 @@ export default function Sketchpad({
     }, 3000);
   }, []);
 
-  /* ── Canvas setup & ResizeObserver ─────────────────────── */
-  const setupCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const rect = container.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
-
-    logicalSize.current = { w, h };
-
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctxRef.current = ctx;
-
-    redrawAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   /* ── Redraw helper (from normalized data) ──────────────── */
   const redrawAll = useCallback(() => {
     const ctx = ctxRef.current;
@@ -209,6 +180,25 @@ export default function Sketchpad({
     // Draw base image if present
     if (baseImageRef.current) {
       ctx.drawImage(baseImageRef.current, 0, 0, w, h);
+    }
+
+    // Draw page break dividers if multi-page
+    if (pages > 1) {
+      ctx.save();
+      ctx.strokeStyle = bgKey === "dark" ? "rgba(255, 255, 255, 0.2)" : "rgba(0, 0, 0, 0.15)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([8, 6]);
+      ctx.font = "12px sans-serif";
+      ctx.fillStyle = bgKey === "dark" ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.4)";
+      for (let p = 1; p < pages; p++) {
+        const y = p * PAGE_HEIGHT_PX;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+        ctx.fillText(`Page ${p + 1}`, 16, y - 8);
+      }
+      ctx.restore();
     }
 
     // Draw all strokes
@@ -228,7 +218,35 @@ export default function Sketchpad({
       ctx.stroke();
     });
     ctx.globalCompositeOperation = "source-over";
-  }, []);
+  }, [pages, bgKey]);
+
+  /* ── Canvas setup & ResizeObserver ─────────────────────── */
+  const setupCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = container.getBoundingClientRect();
+    const w = rect.width;
+    const h = Math.max(rect.height, pages * PAGE_HEIGHT_PX);
+
+    logicalSize.current = { w, h };
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctxRef.current = ctx;
+
+    redrawAll();
+  }, [pages, redrawAll]);
 
   /* ── ResizeObserver ────────────────────────────────────── */
   useEffect(() => {
@@ -573,7 +591,7 @@ export default function Sketchpad({
       {/* ─── Top Control Bar ─────────────────────────────── */}
       <header
         id="control-bar"
-        className="flex items-center gap-2 px-3 py-2 bg-surface-elevated border-b border-border-subtle z-20 flex-shrink-0 flex-wrap"
+        className="flex items-center gap-2 px-3 py-2 bg-surface-elevated border-b border-border-subtle z-50 flex-shrink-0 flex-wrap"
       >
         {/* App Title */}
         <div className="flex items-center gap-1.5 mr-1">
@@ -799,16 +817,16 @@ export default function Sketchpad({
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
             onPointerLeave={handlePointerLeave}
-            className={tool === "eraser" ? "cursor-eraser" : "cursor-pen"}
+            className={`absolute top-0 left-0 ${BG_OPTIONS.find((b) => b.key === bgKey)!.css} ${tool === "eraser" ? "cursor-eraser" : "cursor-pen"}`}
           />
         </div>
         {/* Add Page button at bottom */}
         <button
           id="add-page-button"
-          onClick={() => setPages(p => p + 1)}
-          className="sticky bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-medium bg-surface-elevated/90 text-text-secondary hover:text-accent border border-border-subtle shadow-lg backdrop-blur-sm transition-colors z-10"
+          onClick={() => setPages((p) => p + 1)}
+          className="sticky bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold bg-accent text-white shadow-xl hover:bg-accent-hover transition-transform hover:scale-105 z-40"
         >
-          <Plus className="w-3.5 h-3.5" /> Add Page
+          <Plus className="w-4 h-4" /> Add Page ({pages})
         </button>
       </div>
 
@@ -836,13 +854,13 @@ export default function Sketchpad({
       {/* ─── Close Color Picker on Outside Click ─────────── */}
       {showColorPicker && (
         <div
-          className="fixed inset-0 z-40"
+          className="fixed inset-0 z-30"
           onClick={() => setShowColorPicker(false)}
         />
       )}
       {showBgPicker && (
         <div
-          className="fixed inset-0 z-40"
+          className="fixed inset-0 z-30"
           onClick={() => setShowBgPicker(false)}
         />
       )}
