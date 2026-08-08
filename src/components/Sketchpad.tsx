@@ -40,6 +40,7 @@ import {
   Undo2,
   Redo2,
   LayoutGrid,
+  FilePlus,
 } from "lucide-react";
 
 /* ─── Types ──────────────────────────────────────────────── */
@@ -155,6 +156,8 @@ export default function Sketchpad({
   const [pages, setPages] = useState(1);
   const [saving, setSaving] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showNewNotebookModal, setShowNewNotebookModal] = useState(false);
+  const pendingNewNotebookRef = useRef(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showBgPicker, setShowBgPicker] = useState(false);
@@ -534,6 +537,40 @@ export default function Sketchpad({
     }
   }, [addToast]);
 
+  /* ── New Notebook Logic ────────────────────────────────── */
+  const handleFreshNotebook = useCallback(async () => {
+    strokesMap.current.clear();
+    baseImageRef.current = null;
+    localStrokeKeys.current = [];
+    redoStack.current = [];
+    setPages(1);
+
+    const ctx = ctxRef.current;
+    if (ctx) {
+      const { w, h } = logicalSize.current;
+      ctx.clearRect(0, 0, w, h);
+    }
+
+    try {
+      await remove(ref(getDb(), RTDB_PATH));
+      await remove(ref(getDb(), "base-image"));
+    } catch {
+      /* best-effort */
+    }
+
+    setShowNewNotebookModal(false);
+    addToast("Started a new fresh notebook!", "success");
+  }, [addToast]);
+
+  const handleNewNotebookClick = useCallback(() => {
+    const hasContent = strokesMap.current.size > 0 || baseImageRef.current !== null;
+    if (hasContent) {
+      setShowNewNotebookModal(true);
+    } else {
+      handleFreshNotebook();
+    }
+  }, [handleFreshNotebook]);
+
   /* ── Save to Firestore ─────────────────────────────────── */
   const handleSaveClick = useCallback(() => setShowSaveModal(true), []);
 
@@ -562,12 +599,17 @@ export default function Sketchpad({
       });
       addToast(`"${name}" saved!`, "success");
       setShowSaveModal(false);
+
+      if (pendingNewNotebookRef.current) {
+        pendingNewNotebookRef.current = false;
+        await handleFreshNotebook();
+      }
     } catch (err: unknown) {
       addToast(err instanceof Error ? err.message : "Save failed", "error");
     } finally {
       setSaving(false);
     }
-  }, [addToast]);
+  }, [addToast, handleFreshNotebook]);
 
   /* ── Thickness Controls ────────────────────────────────── */
   const decreaseThickness = useCallback(() => {
@@ -794,6 +836,17 @@ export default function Sketchpad({
           <span className="hidden sm:inline">{saving ? "Saving…" : "Save"}</span>
         </button>
 
+        {/* New Notebook */}
+        <button
+          id="new-notebook-button"
+          onClick={handleNewNotebookClick}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors border border-accent/20"
+          title="Start fresh notebook"
+        >
+          <FilePlus className="w-4 h-4" />
+          <span className="hidden sm:inline">New Notebook</span>
+        </button>
+
         {/* Gallery */}
         <button
           id="gallery-button"
@@ -870,8 +923,57 @@ export default function Sketchpad({
         open={showSaveModal}
         saving={saving}
         onSave={handleSaveWithName}
-        onCancel={() => setShowSaveModal(false)}
+        onCancel={() => {
+          setShowSaveModal(false);
+          pendingNewNotebookRef.current = false;
+        }}
       />
+
+      {/* ─── New Notebook Confirmation Modal ────────────── */}
+      {showNewNotebookModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-surface-elevated border border-border-subtle rounded-2xl p-6 max-w-sm w-full shadow-2xl flex flex-col gap-4 animate-scale-in">
+            <div className="flex items-center gap-3 text-accent">
+              <div className="p-2.5 rounded-xl bg-accent/15">
+                <FilePlus className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-semibold text-text-primary">
+                Start New Notebook?
+              </h3>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              You have active notes in your current notebook. Would you like to save your work before starting a fresh notebook?
+            </p>
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                onClick={() => {
+                  pendingNewNotebookRef.current = true;
+                  setShowNewNotebookModal(false);
+                  setShowSaveModal(true);
+                }}
+                className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold bg-accent text-white hover:bg-accent-hover transition-colors shadow-md flex items-center justify-center gap-2"
+              >
+                <Save className="w-4 h-4" /> Save Current & Start New
+              </button>
+              <button
+                onClick={() => {
+                  setShowNewNotebookModal(false);
+                  handleFreshNotebook();
+                }}
+                className="w-full py-2.5 px-4 rounded-xl text-xs font-medium text-danger hover:bg-danger/10 transition-colors border border-danger/20 flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" /> Discard & Start New
+              </button>
+              <button
+                onClick={() => setShowNewNotebookModal(false)}
+                className="w-full py-2 px-4 rounded-xl text-xs font-medium text-text-muted hover:bg-surface-overlay transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
