@@ -13,6 +13,7 @@ import {
   set,
   remove,
   onChildAdded,
+  onChildChanged,
   onChildRemoved,
   onValue,
   type Unsubscribe,
@@ -23,6 +24,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { getDb, getFirestoreDb } from "@/app/lib/firebase";
+import SaveModal from "./SaveModal";
 import {
   Palette,
   Minus,
@@ -34,6 +36,10 @@ import {
   Check,
   X,
   Pen,
+  Eraser,
+  Undo2,
+  Redo2,
+  LayoutGrid,
 } from "lucide-react";
 
 /* ─── Types ──────────────────────────────────────────────── */
@@ -47,7 +53,10 @@ interface StrokeData {
   points: NormalizedPoint[];
   color: string;
   width: number; // normalized width as fraction of canvas width
+  eraser?: boolean;
 }
+
+type ToolType = "pen" | "eraser";
 
 interface SketchpadProps {
   onOpenGallery: () => void;
@@ -59,10 +68,21 @@ interface SketchpadProps {
 /* ─── Constants ──────────────────────────────────────────── */
 
 const RTDB_PATH = "live-strokes";
-const THROTTLE_MS = 30; // batch writes ≈ every 30 ms for smooth but efficient sync
+const THROTTLE_MS = 30;
 const DEFAULT_COLOR = "#6c63ff";
 const THICKNESS_OPTIONS = [2, 4, 6, 10, 16];
 const DEFAULT_THICKNESS_IDX = 1;
+const PAGE_HEIGHT_PX = 800;
+
+type BgKey = "white" | "cream" | "grid" | "lined" | "dotted" | "dark";
+const BG_OPTIONS: { key: BgKey; label: string; css: string; preview: string }[] = [
+  { key: "white", label: "White", css: "canvas-bg-white", preview: "#fff" },
+  { key: "cream", label: "Cream", css: "canvas-bg-cream", preview: "#fdf6e3" },
+  { key: "grid", label: "Grid", css: "canvas-bg-grid", preview: "#eee" },
+  { key: "lined", label: "Lined", css: "canvas-bg-lined", preview: "#e8f0fe" },
+  { key: "dotted", label: "Dotted", css: "canvas-bg-dotted", preview: "#ddd" },
+  { key: "dark", label: "Dark", css: "canvas-bg-dark", preview: "#1e1e2e" },
+];
 
 /* ─── Toast State ────────────────────────────────────────── */
 
@@ -123,12 +143,21 @@ export default function Sketchpad({
    */
   const baseImageRef = useRef<HTMLImageElement | null>(null);
 
+  /** Track keys of strokes created locally (for undo) */
+  const localStrokeKeys = useRef<string[]>([]);
+  const redoStack = useRef<{ key: string; data: StrokeData }[]>([]);
+
   /* ── UI State ──────────────────────────────────────────── */
   const [color, setColor] = useState(DEFAULT_COLOR);
   const [thicknessIdx, setThicknessIdx] = useState(DEFAULT_THICKNESS_IDX);
+  const [tool, setTool] = useState<ToolType>("pen");
+  const [bgKey, setBgKey] = useState<BgKey>("grid");
+  const [pages, setPages] = useState(1);
   const [saving, setSaving] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showBgPicker, setShowBgPicker] = useState(false);
 
   const thickness = THICKNESS_OPTIONS[thicknessIdx];
 
@@ -185,8 +214,9 @@ export default function Sketchpad({
     // Draw all strokes
     strokesMap.current.forEach((stroke) => {
       if (stroke.points.length < 2) return;
+      ctx.globalCompositeOperation = stroke.eraser ? "destination-out" : "source-over";
       ctx.beginPath();
-      ctx.strokeStyle = stroke.color;
+      ctx.strokeStyle = stroke.eraser ? "rgba(0,0,0,1)" : stroke.color;
       ctx.lineWidth = stroke.width * w;
 
       const first = fromNormalized(stroke.points[0], w, h);
@@ -197,6 +227,7 @@ export default function Sketchpad({
       }
       ctx.stroke();
     });
+    ctx.globalCompositeOperation = "source-over";
   }, []);
 
   /* ── ResizeObserver ────────────────────────────────────── */
@@ -228,6 +259,16 @@ export default function Sketchpad({
       redrawAll();
     });
     unsubs.push(unsubAdd);
+
+    // Listen for stroke updates (points being added while drawing)
+    const unsubChange = onChildChanged(strokesRef, (snapshot) => {
+      const data = snapshot.val() as StrokeData | null;
+      const key = snapshot.key;
+      if (!data || !key) return;
+      strokesMap.current.set(key, data);
+      redrawAll();
+    });
+    unsubs.push(unsubChange);
 
     // Listen for stroke removal (clear canvas from another device)
     const unsubRemove = onChildRemoved(strokesRef, (snapshot) => {
@@ -316,20 +357,22 @@ export default function Sketchpad({
     const pts = currentPoints.current;
     if (pts.length === 0) return;
 
+    const isEraser = tool === "eraser";
     const { w } = logicalSize.current;
-    const normalizedWidth = thickness / w;
+    const normalizedWidth = (isEraser ? thickness * 3 : thickness) / w;
 
     const strokeData: StrokeData = {
       points: [...pts],
-      color,
+      color: isEraser ? "#000000" : color,
       width: normalizedWidth,
+      ...(isEraser ? { eraser: true } : {}),
     };
 
     const strokeRef = ref(getDb(), `${RTDB_PATH}/${currentStrokeId.current}`);
     set(strokeRef, strokeData).catch(() => {
       /* best-effort */
     });
-  }, [color, thickness]);
+  }, [color, thickness, tool]);
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -365,18 +408,21 @@ export default function Sketchpad({
 
       // Draw locally for immediate feedback
       const ctx = ctxRef.current;
+      const isEraser = tool === "eraser";
       if (ctx && currentPoints.current.length >= 2) {
         const { w, h } = logicalSize.current;
         const pts = currentPoints.current;
         const prev = fromNormalized(pts[pts.length - 2], w, h);
         const curr = fromNormalized(pts[pts.length - 1], w, h);
 
+        ctx.globalCompositeOperation = isEraser ? "destination-out" : "source-over";
         ctx.beginPath();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = thickness;
+        ctx.strokeStyle = isEraser ? "rgba(0,0,0,1)" : color;
+        ctx.lineWidth = isEraser ? thickness * 3 : thickness;
         ctx.moveTo(prev.x, prev.y);
         ctx.lineTo(curr.x, curr.y);
         ctx.stroke();
+        ctx.globalCompositeOperation = "source-over";
       }
 
       // Throttled push to RTDB
@@ -387,7 +433,7 @@ export default function Sketchpad({
         }, THROTTLE_MS);
       }
     },
-    [getCanvasPoint, color, thickness, flushPointsToRTDB]
+    [getCanvasPoint, color, thickness, flushPointsToRTDB, tool]
   );
 
   const handlePointerUp = useCallback(
@@ -402,6 +448,11 @@ export default function Sketchpad({
         throttleTimer.current = null;
       }
       flushPointsToRTDB();
+      if (currentStrokeId.current) {
+        localStrokeKeys.current.push(currentStrokeId.current);
+        if (localStrokeKeys.current.length > 50) localStrokeKeys.current.shift();
+        redoStack.current = []; // new stroke clears redo
+      }
       currentStrokeId.current = null;
       currentPoints.current = [];
     },
@@ -417,6 +468,31 @@ export default function Sketchpad({
     },
     [handlePointerUp]
   );
+
+  /* ── Undo / Redo ──────────────────────────────────────── */
+  const handleUndo = useCallback(async () => {
+    const key = localStrokeKeys.current.pop();
+    if (!key) return;
+    const data = strokesMap.current.get(key);
+    if (data) redoStack.current.push({ key, data });
+    try { await remove(ref(getDb(), `${RTDB_PATH}/${key}`)); } catch { /* best-effort */ }
+  }, []);
+
+  const handleRedo = useCallback(async () => {
+    const item = redoStack.current.pop();
+    if (!item) return;
+    localStrokeKeys.current.push(item.key);
+    try { await set(ref(getDb(), `${RTDB_PATH}/${item.key}`), item.data); } catch { /* best-effort */ }
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); handleRedo(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleUndo, handleRedo]);
 
   /* ── Clear Canvas ──────────────────────────────────────── */
   const handleClear = useCallback(async () => {
@@ -441,44 +517,35 @@ export default function Sketchpad({
   }, [addToast]);
 
   /* ── Save to Firestore ─────────────────────────────────── */
-  const handleSave = useCallback(async () => {
+  const handleSaveClick = useCallback(() => setShowSaveModal(true), []);
+
+  const handleSaveWithName = useCallback(async (name: string) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     setSaving(true);
     try {
-      // Try WebP first, fall back to JPEG
       let dataUrl: string;
       const webpUrl = canvas.toDataURL("image/webp", 0.7);
-      if (webpUrl.startsWith("data:image/webp")) {
-        dataUrl = webpUrl;
-      } else {
-        dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-      }
-
-      // Validate size — Firestore docs must be < 1 MB
+      dataUrl = webpUrl.startsWith("data:image/webp") ? webpUrl : canvas.toDataURL("image/jpeg", 0.7);
       const approxBytes = dataUrl.length * 0.75;
       if (approxBytes > 900_000) {
-        // Re-compress at lower quality
         const lowQ = canvas.toDataURL("image/jpeg", 0.4);
         if (lowQ.length * 0.75 > 900_000) {
-          addToast("Canvas too large to save — try a smaller drawing", "error");
+          addToast("Canvas too large to save", "error");
           setSaving(false);
           return;
         }
         dataUrl = lowQ;
       }
-
       await addDoc(collection(getFirestoreDb(), "sketches"), {
+        name,
         imageDataUrl: dataUrl,
         createdAt: serverTimestamp(),
       });
-
-      addToast("Sketch saved!", "success");
+      addToast(`"${name}" saved!`, "success");
+      setShowSaveModal(false);
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Unknown error saving sketch";
-      addToast(message, "error");
+      addToast(err instanceof Error ? err.message : "Save failed", "error");
     } finally {
       setSaving(false);
     }
@@ -519,6 +586,26 @@ export default function Sketchpad({
         {/* Divider */}
         <div className="w-px h-6 bg-border-subtle hidden sm:block" />
 
+        {/* Tool Selector: Pen / Eraser */}
+        <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-surface">
+          <button
+            id="tool-pen"
+            onClick={() => setTool("pen")}
+            className={`p-1.5 rounded-md transition-colors ${tool === "pen" ? "bg-accent text-white" : "text-text-secondary hover:bg-surface-overlay"}`}
+            title="Pen"
+          >
+            <Pen className="w-4 h-4" />
+          </button>
+          <button
+            id="tool-eraser"
+            onClick={() => setTool("eraser")}
+            className={`p-1.5 rounded-md transition-colors ${tool === "eraser" ? "bg-accent text-white" : "text-text-secondary hover:bg-surface-overlay"}`}
+            title="Eraser"
+          >
+            <Eraser className="w-4 h-4" />
+          </button>
+        </div>
+
         {/* Color Picker */}
         <div className="relative">
           <button
@@ -545,6 +632,7 @@ export default function Sketchpad({
                     key={c}
                     onClick={() => {
                       setColor(c);
+                      setTool("pen");
                       setShowColorPicker(false);
                     }}
                     className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${
@@ -562,7 +650,10 @@ export default function Sketchpad({
                 <input
                   type="color"
                   value={color}
-                  onChange={(e) => setColor(e.target.value)}
+                  onChange={(e) => {
+                    setColor(e.target.value);
+                    setTool("pen");
+                  }}
                   className="w-8 h-6 cursor-pointer rounded border-none bg-transparent"
                 />
               </label>
@@ -601,8 +692,62 @@ export default function Sketchpad({
           </button>
         </div>
 
+        {/* Background Selector */}
+        <div className="relative">
+          <button
+            id="bg-picker-toggle"
+            onClick={() => setShowBgPicker((v) => !v)}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-surface hover:bg-surface-overlay transition-colors text-xs font-medium text-text-secondary"
+            title="Choose canvas background pattern"
+          >
+            <LayoutGrid className="w-4 h-4 text-text-secondary" />
+            <span className="hidden md:inline">{BG_OPTIONS.find((b) => b.key === bgKey)?.label}</span>
+          </button>
+
+          {showBgPicker && (
+            <div
+              id="bg-picker-dropdown"
+              className="absolute top-full left-0 mt-2 p-2 bg-surface-elevated border border-border-subtle rounded-xl shadow-xl z-50 animate-fade-in flex flex-col gap-1 min-w-[140px]"
+            >
+              <div className="text-[11px] font-semibold text-text-muted px-2 py-1">
+                Background Pattern
+              </div>
+              {BG_OPTIONS.map((bg) => (
+                <button
+                  key={bg.key}
+                  onClick={() => {
+                    setBgKey(bg.key);
+                    setShowBgPicker(false);
+                  }}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
+                    bgKey === bg.key
+                      ? "bg-accent/15 text-accent font-medium"
+                      : "text-text-secondary hover:bg-surface-overlay"
+                  }`}
+                >
+                  <span
+                    className="w-3.5 h-3.5 rounded border border-border-subtle flex-shrink-0"
+                    style={{ backgroundColor: bg.preview }}
+                  />
+                  {bg.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Spacer */}
         <div className="flex-1 min-w-0" />
+
+        {/* Undo / Redo */}
+        <div className="flex items-center gap-0.5">
+          <button id="undo-button" onClick={handleUndo} className="p-1.5 rounded-lg text-text-secondary hover:bg-surface-overlay transition-colors" title="Undo (Ctrl+Z)">
+            <Undo2 className="w-4 h-4" />
+          </button>
+          <button id="redo-button" onClick={handleRedo} className="p-1.5 rounded-lg text-text-secondary hover:bg-surface-overlay transition-colors" title="Redo (Ctrl+Y)">
+            <Redo2 className="w-4 h-4" />
+          </button>
+        </div>
 
         {/* Clear */}
         <button
@@ -618,7 +763,7 @@ export default function Sketchpad({
         {/* Save */}
         <button
           id="save-button"
-          onClick={handleSave}
+          onClick={handleSaveClick}
           disabled={saving}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-60 transition-colors"
           title="Save sketch"
@@ -643,18 +788,28 @@ export default function Sketchpad({
         </button>
       </header>
 
-      {/* ─── Canvas Container ────────────────────────────── */}
-      <div ref={containerRef} className="flex-1 relative overflow-hidden">
-        <canvas
-          ref={canvasRef}
-          id="sketch-canvas"
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-          onPointerLeave={handlePointerLeave}
-          className="absolute inset-0"
-        />
+      {/* ─── Canvas Container (scrollable) ────────────────── */}
+      <div ref={containerRef} className={`flex-1 relative overflow-y-auto overflow-x-hidden custom-scrollbar ${BG_OPTIONS.find(b => b.key === bgKey)!.css}`}>
+        <div style={{ minHeight: `${pages * PAGE_HEIGHT_PX}px`, position: "relative" }}>
+          <canvas
+            ref={canvasRef}
+            id="sketch-canvas"
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            onPointerLeave={handlePointerLeave}
+            className={tool === "eraser" ? "cursor-eraser" : "cursor-pen"}
+          />
+        </div>
+        {/* Add Page button at bottom */}
+        <button
+          id="add-page-button"
+          onClick={() => setPages(p => p + 1)}
+          className="sticky bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-medium bg-surface-elevated/90 text-text-secondary hover:text-accent border border-border-subtle shadow-lg backdrop-blur-sm transition-colors z-10"
+        >
+          <Plus className="w-3.5 h-3.5" /> Add Page
+        </button>
       </div>
 
       {/* ─── Toasts ──────────────────────────────────────── */}
@@ -685,6 +840,20 @@ export default function Sketchpad({
           onClick={() => setShowColorPicker(false)}
         />
       )}
+      {showBgPicker && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setShowBgPicker(false)}
+        />
+      )}
+
+      {/* ─── Save Modal ──────────────────────────────────── */}
+      <SaveModal
+        open={showSaveModal}
+        saving={saving}
+        onSave={handleSaveWithName}
+        onCancel={() => setShowSaveModal(false)}
+      />
     </div>
   );
 }

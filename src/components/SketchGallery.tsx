@@ -28,6 +28,7 @@ import {
 
 interface SketchDoc {
   id: string;
+  name?: string;
   imageDataUrl: string;
   createdAt: Timestamp | null;
 }
@@ -96,6 +97,7 @@ export default function SketchGallery({
 
         const docs: SketchDoc[] = snapshot.docs.map((d) => ({
           id: d.id,
+          name: (d.data().name as string) || "Untitled Sketch",
           imageDataUrl: d.data().imageDataUrl as string,
           createdAt: (d.data().createdAt as Timestamp) || null,
         }));
@@ -229,27 +231,32 @@ export default function SketchGallery({
                     </button>
 
                     {/* Info / Actions */}
-                    <div className="flex items-center justify-between px-2.5 py-2">
-                      <span className="flex items-center gap-1 text-xs text-text-muted truncate">
-                        <Clock className="w-3 h-3 flex-shrink-0" />
-                        {timeAgo(sketch.createdAt)}
-                      </span>
-                      <button
-                        id={`delete-sketch-${sketch.id}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(sketch.id);
-                        }}
-                        disabled={deletingId === sketch.id}
-                        className="p-1.5 rounded-md text-text-muted hover:text-danger hover:bg-danger/10 transition-colors disabled:opacity-50"
-                        title="Delete sketch"
-                      >
-                        {deletingId === sketch.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-3.5 h-3.5" />
-                        )}
-                      </button>
+                    <div className="flex flex-col gap-1 px-2.5 py-2">
+                      <h4 className="text-xs font-semibold text-text-primary truncate" title={sketch.name}>
+                        {sketch.name || "Untitled Sketch"}
+                      </h4>
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1 text-[10px] text-text-muted truncate">
+                          <Clock className="w-3 h-3 flex-shrink-0" />
+                          {timeAgo(sketch.createdAt)}
+                        </span>
+                        <button
+                          id={`delete-sketch-${sketch.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(sketch.id);
+                          }}
+                          disabled={deletingId === sketch.id}
+                          className="p-1 rounded-md text-text-muted hover:text-danger hover:bg-danger/10 transition-colors disabled:opacity-50"
+                          title="Delete sketch"
+                        >
+                          {deletingId === sketch.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
