@@ -382,6 +382,35 @@ export default function Sketchpad({
     return () => unsub();
   }, [redrawAll]);
 
+  /* ── Listen for canvas-bg changes from RTDB ──── */
+  useEffect(() => {
+    const bgRef = ref(getDb(), "canvas-bg");
+    const unsub = onValue(bgRef, (snapshot) => {
+      const val = snapshot.val() as BgKey | null;
+      if (val && ["white", "cream", "grid", "lined", "dotted", "dark"].includes(val)) {
+        setBgKey(val);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  /* ── Background Change Handler ─────────────────────────── */
+  const handleBgChange = useCallback(
+    (newBg: BgKey) => {
+      setBgKey(newBg);
+      setShowBgPicker(false);
+      if (baseImageRef.current) {
+        baseImageRef.current = null;
+      }
+      const bgRef = ref(getDb(), "canvas-bg");
+      set(bgRef, newBg).catch(() => {});
+      setTimeout(() => {
+        redrawAll();
+      }, 0);
+    },
+    [redrawAll]
+  );
+
   /* ── Pointer Handlers ──────────────────────────────────── */
 
   const getCanvasPoint = useCallback(
@@ -578,6 +607,7 @@ export default function Sketchpad({
     try {
       await remove(ref(getDb(), RTDB_PATH));
       await remove(ref(getDb(), "base-image"));
+      await remove(ref(getDb(), "canvas-bg"));
     } catch {
       /* best-effort */
     }
@@ -799,10 +829,7 @@ export default function Sketchpad({
               {BG_OPTIONS.map((bg) => (
                 <button
                   key={bg.key}
-                  onClick={() => {
-                    setBgKey(bg.key);
-                    setShowBgPicker(false);
-                  }}
+                  onClick={() => handleBgChange(bg.key)}
                   className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
                     bgKey === bg.key
                       ? "bg-accent/15 text-accent font-medium"
