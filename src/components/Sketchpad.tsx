@@ -180,9 +180,11 @@ export default function Sketchpad({
     const { w, h } = logicalSize.current;
     ctx.clearRect(0, 0, w, h);
 
-    // Draw base image if present
+    // Draw base image if present (preserving true aspect ratio height)
     if (baseImageRef.current) {
-      ctx.drawImage(baseImageRef.current, 0, 0, w, h);
+      const img = baseImageRef.current;
+      const imgAspectH = (img.naturalHeight / (img.naturalWidth || 1)) * w;
+      ctx.drawImage(img, 0, 0, w, Math.max(imgAspectH, h));
     }
 
     // Draw page break dividers if multi-page
@@ -317,10 +319,28 @@ export default function Sketchpad({
   useEffect(() => {
     if (!loadImageDataUrl) return;
     const img = new window.Image();
-    img.onload = () => {
+    img.onload = async () => {
+      // Clear current strokes to prevent overlap when opening a saved notebook
+      strokesMap.current.clear();
+      localStrokeKeys.current = [];
+      redoStack.current = [];
+
+      try {
+        await remove(ref(getDb(), RTDB_PATH));
+      } catch {
+        /* best-effort */
+      }
+
       baseImageRef.current = img;
 
-      // Also sync the base image to RTDB so other devices see it
+      // Compute required page count from image aspect ratio to prevent vertical compression
+      const container = containerRef.current;
+      const w = container ? container.getBoundingClientRect().width : window.innerWidth;
+      const naturalAspectH = (img.naturalHeight / (img.naturalWidth || 1)) * w;
+      const neededPages = Math.max(1, Math.ceil(naturalAspectH / PAGE_HEIGHT_PX));
+      setPages(neededPages);
+
+      // Sync base image to RTDB
       const baseRef = ref(getDb(), "base-image");
       set(baseRef, loadImageDataUrl).catch(() => {
         /* best-effort */
@@ -346,11 +366,15 @@ export default function Sketchpad({
         redrawAll();
         return;
       }
-      // Don't reload if it's the same image we already have
       if (baseImageRef.current?.src === dataUrl) return;
       const img = new window.Image();
       img.onload = () => {
         baseImageRef.current = img;
+        const container = containerRef.current;
+        const w = container ? container.getBoundingClientRect().width : window.innerWidth;
+        const naturalAspectH = (img.naturalHeight / (img.naturalWidth || 1)) * w;
+        const neededPages = Math.max(1, Math.ceil(naturalAspectH / PAGE_HEIGHT_PX));
+        setPages(neededPages);
         redrawAll();
       };
       img.src = dataUrl;
